@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Process Map</title>
+  <script src="https://unpkg.com/gojs/release/go.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: sans-serif;
+    }
+    #myPaletteDiv {
+      width: 120px;
+      height: 100%;
+      float: left;
+      background: #f0f0f0;
+      border-right: 1px solid lightgray;
+    }
+    #myDiagramDiv {
+      flex-grow: 1;
+      height: calc(100% - 60px);
+      background: #ffffff;
+    }
+    #controls {
+      padding: 10px;
+      border-top: 1px solid lightgray;
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+    }
+    #levelSlider {
+      margin: 0 10px;
+    }
+    #container {
+      display: flex;
+      height: calc(100% - 60px);
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="myPaletteDiv"></div>
+    <div id="myDiagramDiv"></div>
+  </div>
+  <div id="controls">
+    <label for="levelSlider">Expand Level:</label>
+    <input type="range" id="levelSlider" min="0" max="3" value="3">
+    <button onclick="save()">💾 Save</button>
+    <button onclick="load()">🔁 Reload</button>
+  </div>
+  <textarea id="mySavedModel" style="width:100%; height:100px; display:none;"></textarea>
+
+  <script>
+    function init() {
+      const $ = go.GraphObject.make;
+
+      const colors = {
+        white: '#fffcf6',
+        blue: '#dfebe5',
+        darkblue: '#cae0d8',
+        yellow: '#fcdba2',
+        gray: '#59524c',
+        black: '#000000'
+      };
+
+      myDiagram = $(go.Diagram, 'myDiagramDiv', {
+        'InitialLayoutCompleted': e => updateTotalGroupDepth(),
+        mouseDrop: e => finishDrop(e, null),
+        layout: $(go.GridLayout, {
+          wrappingWidth: Infinity,
+          alignment: go.GridLayout.Position,
+          cellSize: new go.Size(1, 1)
+        }),
+        'commandHandler.archetypeGroupData': { isGroup: true, text: 'Group', horiz: true },
+        'undoManager.isEnabled': true
+      });
+
+      function makeLayout(horiz) {
+        return $(go.GridLayout, {
+          wrappingColumn: horiz ? Infinity : 1,
+          alignment: go.GridLayout.Position,
+          cellSize: new go.Size(1, 1),
+          spacing: horiz ? new go.Size(8, 8) : new go.Size(5, 5)
+        });
+      }
+
+      function defaultColor(horiz) {
+        return horiz ? colors.white : colors.darkblue;
+      }
+
+      function highlightGroup(e, grp, show) {
+        if (!grp) return;
+        e.handled = true;
+        if (show) {
+          const tool = grp.diagram.toolManager.draggingTool;
+          const map = tool.draggedParts || tool.copiedParts;
+          if (grp.canAddMembers(map.toKeySet())) {
+            grp.isHighlighted = true;
+            return;
+          }
+        }
+        grp.isHighlighted = false;
+      }
+
+      function finishDrop(e, grp) {
+        const ok = (grp !== null
+          ? grp.addMembers(grp.diagram.selection, true)
+          : e.diagram.commandHandler.addTopLevelParts(e.diagram.selection, true));
+        if (!ok) e.diagram.currentTool.doCancel();
+        const slider = document.getElementById('levelSlider');
+        const oldMax = parseInt(slider.max);
+        updateTotalGroupDepth();
+        const newMax = parseInt(slider.max);
+        slider.value = parseInt(slider.value) + newMax - oldMax;
+      }
+
+      myDiagram.groupTemplate =
+        $(go.Group, 'Auto',
+          {
+            ungroupable: true,
+            mouseDragEnter: (e, grp) => highlightGroup(e, grp, true),
+            mouseDragLeave: (e, grp) => highlightGroup(e, grp, false),
+            computesBoundsAfterDrag: true,
+            computesBoundsIncludingLocation: true,
+            mouseDrop: finishDrop,
+            handlesDragDropForMembers: true,
+            layout: makeLayout(true),
+            background: defaultColor(true)
+          },
+          new go.Binding('background', 'horiz', defaultColor),
+          new go.Binding('layout', 'horiz', makeLayout),
+          $(go.Shape, 'Rectangle', { stroke: colors.gray, strokeWidth: 1 },
+            new go.Binding('fill', 'isHighlighted', h => h ? 'rgba(0,255,0,.3)' : 'transparent')),
+          $(go.Panel, 'Vertical',
+            $(go.Panel, 'Horizontal', { stretch: go.GraphObject.Horizontal },
+              $('SubGraphExpanderButton', { alignment: go.Spot.Right, margin: 5 }),
+              $(go.TextBlock,
+                {
+                  alignment: go.Spot.Left,
+                  editable: true,
+                  margin: new go.Margin(6, 10, 6, 1),
+                  font: 'bold 16px Lora, serif',
+                  opacity: 0.95,
+                  stroke: colors.black
+                },
+                new go.Binding('font', 'horiz', h => h ? 'bold 20px Lora, serif' : 'bold 16px Lora, serif'),
+                new go.Binding('text').makeTwoWay())
+            ),
+            $(go.Placeholder, { padding: 8, margin: 4, alignment: go.Spot.TopLeft })
+          )
+        );
+
+      myDiagram.nodeTemplate =
+        $(go.Node, 'Auto',
+          {
+            mouseDrop: (e, node) => finishDrop(e, node.containingGroup),
+            isShadowed: true,
+            shadowBlur: 0,
+            shadowColor: colors.gray,
+            shadowOffset: new go.Point(4.5, 3.5)
+          },
+          $(go.Shape, 'RoundedRectangle', { fill: colors.yellow, stroke: null, strokeWidth: 0 }),
+          $(go.Panel, 'Vertical',
+            $(go.TextBlock, {
+              font: 'bold 12px Lora, serif',
+              stroke: colors.black
+            }, new go.Binding('key')),
+            $(go.TextBlock, {
+              margin: 4,
+              editable: true,
+              font: '13px Lora, serif'
+            }, new go.Binding('text').makeTwoWay())
+          )
+        );
+
+      myPalette = $(go.Palette, 'myPaletteDiv', {
+        nodeTemplateMap: myDiagram.nodeTemplateMap,
+        groupTemplateMap: myDiagram.groupTemplateMap,
+        model: new go.GraphLinksModel([
+          { text: 'New Node', color: '#ACE600' },
+          { isGroup: true, text: 'H Group', horiz: true },
+          { isGroup: true, text: 'V Group', horiz: false }
+        ])
+      });
+
+      document.getElementById('levelSlider').addEventListener('change', reexpand);
+      document.getElementById('levelSlider').addEventListener('input', reexpand);
+
+      load();
+    }
+
+    function reexpand() {
+      myDiagram.commit(diag => {
+        const level = parseInt(document.getElementById('levelSlider').value);
+        diag.findTopLevelGroups().each(g => expandGroups(g, 0, level));
+      }, 'reexpand');
+    }
+
+    function expandGroups(g, i, level) {
+      if (!(g instanceof go.Group)) return;
+      g.isSubGraphExpanded = i < level;
+      g.memberParts.each(m => expandGroups(m, i + 1, level));
+    }
+
+    function updateTotalGroupDepth() {
+      let d = 0;
+      myDiagram.findTopLevelGroups().each(g => d = Math.max(d, groupDepth(g)));
+      document.getElementById('levelSlider').max = Math.max(0, d);
+    }
+
+    function groupDepth(g) {
+      if (!(g instanceof go.Group)) return 0;
+      let d = 1;
+      g.memberParts.each(m => d = Math.max(d, groupDepth(m) + 1));
+      return d;
+    }
+
+    function save() {
+      document.getElementById('mySavedModel').value = myDiagram.model.toJson();
+      myDiagram.isModified = false;
+    }
+
+    function load() {
+      const processData = {
+        "Exploration": [
+          { "code": "E.1", "process": "Define Sub-Market" },
+          { "code": "E.2", "process": "Understand markets" },
+          { "code": "E.3", "process": "Build Investment case" },
+          { "code": "E.4", "process": "Develop Operational Strategy" }
+        ],
+        "Registration": [
+          { "code": "R.1", "process": "Register/Manage Users" },
+          { "code": "R.2", "process": "Register/Manage Organisations" },
+          { "code": "R.3", "process": "Register/Manage Related Entities" },
+          { "code": "R.4", "process": "Issue and Sign Service T&Cs" },
+          { "code": "R.5", "process": "Qualify Commercially" },
+          { "code": "R.6", "process": "Register/Manage Assets" },
+          { "code": "R.7", "process": "Manage Asset Data" },
+          { "code": "R.8", "process": "Qualify Assets" },
+          { "code": "R.9", "process": "Register/Manage Units" },
+          { "code": "R.10", "process": "Qualify Units" },
+          { "code": "R.11", "process": "Test Units" },
+          { "code": "R.12", "process": "Manage Unit Data" }
+        ],
+        "Competition": [
+          { "code": "C.1", "process": "Communicate Buy Requirements" },
+          { "code": "C.2", "process": "Communicate Sell Requirements" },
+          { "code": "C.3", "process": "Clear Market" },
+          { "code": "C.4", "process": "Communicate Results / Award Contracts" }
+        ],
+        "Schedule/Dispatch": [
+          { "code": "D.1", "process": "Maintain Unit Availability" },
+          { "code": "D.2", "process": "Provide Operational Visibility/Metering" },
+          { "code": "D.3", "process": "Dispatch Units" },
+          { "code": "D.4", "process": "Deliver Service" },
+          { "code": "D.5", "process": "Cease Units" }
+        ],
+        "Verification": [
+          { "code": "V.1", "process": "Collate Verification Data" },
+          { "code": "V.2", "process": "Process Verification Data" },
+          { "code": "V.3", "process": "Communicate performance" },
+          { "code": "V.4", "process": "Manage disputes" }
+        ],
+        "Settlement": [
+          { "code": "S.1", "process": "Generate Invoices" },
+          { "code": "S.2", "process": "Process Payments" }
+        ]
+      };
+
+      const nodeDataArray = [];
+      for (const [groupName, processes] of Object.entries(processData)) {
+        nodeDataArray.push({
+          key: groupName,
+          text: groupName,
+          isGroup: true,
+          horiz: true
+        });
+
+        for (const item of processes) {
+          nodeDataArray.push({
+            key: item.code,
+            text: item.process,
+            group: groupName
+          });
+        }
+      }
+
+      myDiagram.model = new go.GraphLinksModel(nodeDataArray);
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
